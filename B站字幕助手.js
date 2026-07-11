@@ -7,6 +7,8 @@
 // @match        https://www.bilibili.com/video/*
 // @match        https://www.bilibili.com/bangumi/play/*
 // @match        https://www.bilibili.com/cheese/play/*
+// @match        https://www.bilibili.com/list/watchlater*
+// @match        https://www.bilibili.com/list/*
 // @icon         https://www.bilibili.com/favicon.ico
 // @grant        none
 // @run-at       document-idle
