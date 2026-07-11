@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         B站自动打开字幕
+// @name         B站字幕助手
 // @namespace    /DBI/bilibili-subtitle-assistant
 // @version      1.0.0
-// @description  自动开启 AI 中文字幕，仅在用户未手动操作字幕时生效。
+// @description  自动开启 AI 中文字幕，仅在用户未手动操作字幕时生效; 按Z键开关字幕
 // @author       habixz
 // @match        https://www.bilibili.com/video/*
 // @match        https://www.bilibili.com/bangumi/play/*
@@ -22,8 +22,11 @@
     const SUBTITLE_BTN_SELECTOR = '.bpx-player-ctrl-subtitle';
     const SUBTITLE_MENU_SELECTOR = '.bpx-player-ctrl-subtitle-panel';
     const AI_ZH_ITEM_SELECTOR = '.bpx-player-ctrl-subtitle-language-item[data-lan="ai-zh"]';
+    const SUBTITLE_CLOSE_SWITCH_SELECTOR = '.bpx-player-ctrl-subtitle-close-switch';
     const ACTIVE_LANGUAGE_SELECTOR = '.bpx-player-ctrl-subtitle-language-active';
     const ACTIVE_BUTTON_CLASS = 'bpx-player-ctrl-btn--active';
+    const ACTIVE_SUBTITLE_ITEM_CLASS = 'bpx-state-active';
+    const TOGGLE_SUBTITLE_SHORTCUT_CODE = 'KeyZ';
 
     /**
    * 记录当前页面和当前页面上的自动处理状态。
@@ -86,6 +89,133 @@
                 userHasInteracted = true;
                 console.log('[B站字幕助手] 检测到用户手动操作字幕，停止自动干预');
             }
+        }, true);
+    }
+
+    /**
+   * 判断当前触发目标是否位于可编辑区域内。
+   * 这样按 Z 键时不会干扰输入框、文本域、富文本编辑器等原生输入行为。
+   */
+    function isEditableTarget(target) {
+        if (!(target instanceof Element)) {
+            return false;
+        }
+
+        if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+            return true;
+        }
+
+        if (target instanceof HTMLElement && target.isContentEditable) {
+            return true;
+        }
+
+        return Boolean(target.closest('[contenteditable="true"]'));
+    }
+
+    /**
+   * 获取字幕菜单里和开关相关的真实节点。
+   * 这里不再把底部“字幕”按钮当成最终开关，
+   * 因为实测真正控制开/关的是：
+   * - AI 中文字幕项
+   * - 关闭字幕项
+   */
+    function getSubtitleControlNodes() {
+        const aiZhItem = document.querySelector(AI_ZH_ITEM_SELECTOR);
+        const closeSwitch = document.querySelector(SUBTITLE_CLOSE_SWITCH_SELECTOR);
+
+        return {
+            aiZhItem,
+            closeSwitch
+        };
+    }
+
+    /**
+   * 判断 AI 中文字幕当前是否已经开启。
+   * 优先读取菜单项本身的激活态类名，
+   * 不依赖底部按钮是否高亮，避免把“菜单已打开”和“字幕已开启”混为一谈。
+   */
+    function isAiZhSubtitleEnabled() {
+        const { aiZhItem, closeSwitch } = getSubtitleControlNodes();
+
+        if (!(aiZhItem instanceof HTMLElement)) {
+            return false;
+        }
+
+        if (aiZhItem.classList.contains(ACTIVE_SUBTITLE_ITEM_CLASS)) {
+            return true;
+        }
+
+        if (closeSwitch instanceof HTMLElement && closeSwitch.classList.contains(ACTIVE_SUBTITLE_ITEM_CLASS)) {
+            return false;
+        }
+
+        const activeItem = aiZhItem.parentElement?.querySelector(ACTIVE_LANGUAGE_SELECTOR);
+        return Boolean(activeItem && activeItem.closest('[data-lan="ai-zh"]'));
+    }
+
+    /**
+   * 通过快捷键切换字幕总开关。
+   * 这里直接点击字幕菜单中的真实开关项，而不是点击底部“字幕”按钮。
+   *
+   * 额外说明：
+   * - 按 Z 属于用户主动操作，所以会标记为手动干预
+   * - 一旦用户手动干预，就立即停止当前页面的自动重试，避免脚本和用户操作互相打架
+   */
+    function toggleSubtitleByShortcut() {
+        const { aiZhItem, closeSwitch } = getSubtitleControlNodes();
+        if (!(aiZhItem instanceof HTMLElement) || !(closeSwitch instanceof HTMLElement)) {
+            return;
+        }
+
+        userHasInteracted = true;
+        hasAutoActivated = false;
+        stopRetryLoop();
+
+        if (isAiZhSubtitleEnabled()) {
+            closeSwitch.click();
+            console.log('[B站字幕助手] 已通过 Z 键关闭字幕');
+        } else {
+            aiZhItem.click();
+            console.log('[B站字幕助手] 已通过 Z 键开启 AI 中文字幕');
+        }
+    }
+
+    /**
+   * 监听 Z 键快捷键。
+   * 只响应裸键按下：
+   * - 不处理 Ctrl / Alt / Shift / Meta 组合键
+   * - 不处理长按重复触发
+   * - 不处理输入场景，避免影响正常打字
+   */
+    function setupShortcutListener() {
+        document.addEventListener('keydown', (event) => {
+            if (!event.isTrusted) {
+                return;
+            }
+
+            const isTargetShortcut =
+                event.code === TOGGLE_SUBTITLE_SHORTCUT_CODE ||
+                String(event.key).toLowerCase() === 'z';
+
+            if (!isTargetShortcut) {
+                return;
+            }
+
+            if (event.repeat || event.isComposing) {
+                return;
+            }
+
+            if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) {
+                return;
+            }
+
+            if (isEditableTarget(event.target)) {
+                return;
+            }
+
+            event.preventDefault();
+            event.stopPropagation();
+            toggleSubtitleByShortcut();
         }, true);
     }
 
@@ -214,6 +344,7 @@
      * 初始页直接先启动一次，再开始保险轮询。
      */
     setupUserInteractionWatcher();
+    setupShortcutListener();
     setupNavigationWatcher();
     activateAISubtitle();
     startRetryLoop();
